@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dot Matrix Playground</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        ink:    { DEFAULT: '#0e0f13', 2: '#14151b', 3: '#1a1c24' },
+        line:   { DEFAULT: '#26272e', 2: '#33353f' },
+        accent: { DEFAULT: '#e94560', dim: '#e9456022' },
+        muted:  '#8b90a0',
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+      },
+    },
+  },
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css" />
+</head>
+<body class="h-screen w-screen overflow-hidden bg-ink text-zinc-200 font-sans text-[13px] select-none dark">
+
+  <!-- Top bar -->
+  <header id="topbar" class="h-11 flex items-center gap-2 px-3 border-b border-line bg-ink-2 relative z-20">
+    <div class="flex items-center gap-2 pr-2">
+      <div class="grid grid-cols-2 gap-[2px]">
+        <span class="w-[5px] h-[5px] bg-accent"></span><span class="w-[5px] h-[5px] bg-zinc-200"></span>
+        <span class="w-[5px] h-[5px] bg-zinc-200"></span><span class="w-[5px] h-[5px] bg-accent"></span>
+      </div>
+      <span class="font-semibold tracking-tight">dotmatrix</span>
+    </div>
+    <div class="w-px h-5 bg-line"></div>
+    <input id="project-name" value="Untitled" spellcheck="false"
+      class="bg-transparent px-2 py-1 rounded hover:bg-ink-3 focus:bg-ink-3 outline-none w-36 text-zinc-300" />
+    <div class="flex-1"></div>
+    <div id="topbar-actions" class="flex items-center gap-1"></div>
+  </header>
+
+  <div class="flex" style="height: calc(100vh - 44px);">
+
+    <!-- Left sidebar -->
+    <aside id="sidebar-left" class="w-[248px] shrink-0 border-r border-line bg-ink-2 flex flex-col">
+      <div id="toolbar" class="p-2 border-b border-line"></div>
+      <div id="layers-panel" class="flex-1 overflow-y-auto"></div>
+    </aside>
+
+    <!-- Canvas -->
+    <main id="canvas-wrap" class="flex-1 relative overflow-hidden bg-ink min-w-0">
+      <canvas id="canvas" class="absolute inset-0"></canvas>
+      <div id="statusbar" class="absolute bottom-2 left-3 flex items-center gap-3 text-[11px] font-mono text-muted pointer-events-none"></div>
+      <div id="zoom-hud" class="absolute bottom-2 right-3 flex items-center gap-1"></div>
+    </main>
+
+    <!-- Right inspector -->
+    <aside id="sidebar-right" class="w-[272px] shrink-0 border-l border-line bg-ink-2 overflow-y-auto">
+      <div id="inspector"></div>
+    </aside>
+  </div>
+
+  <!-- Timeline -->
+  <div id="timeline" class="absolute left-[248px] right-[272px] bottom-0 z-10"></div>
+
+  <!-- Modal root -->
+  <div id="modal-root"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
