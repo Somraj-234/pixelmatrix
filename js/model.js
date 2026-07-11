@@ -8,6 +8,10 @@ export const SHAPES = [
   'half-square', 'ring', 'plus',
 ];
 
+export function defaultStroke() {
+  return { enabled: false, color: '#000000', width: 2 };
+}
+
 export function defaultCell(brush) {
   return {
     shape: brush?.shape ?? 'square',
@@ -15,6 +19,7 @@ export function defaultCell(brush) {
     color: brush?.color ?? '#FFFFFF',
     opacity: brush?.opacity ?? 1,
     rotation: brush?.rotation ?? 0,
+    stroke: brush?.stroke ? JSON.parse(JSON.stringify(brush.stroke)) : defaultStroke(),
     anim: brush?.anim ? JSON.parse(JSON.stringify(brush.anim)) : null,
   };
 }
@@ -73,6 +78,11 @@ export function migrateDoc(doc) {
   doc.layers = (doc.layers?.length ? doc.layers : [makeLayer('Layer 1')]).map(l => ({
     visible: true, locked: false, opacity: 1, cells: {}, groupAnim: null, type: 'dots', ...l,
   }));
+  // Backfill stroke on cells/styles saved before that field existed.
+  for (const l of doc.layers) {
+    for (const cell of Object.values(l.cells)) if (!cell.stroke) cell.stroke = defaultStroke();
+    if (l.style && !l.style.stroke) l.style.stroke = defaultStroke();
+  }
   return doc;
 }
 
@@ -107,8 +117,8 @@ export function resizeGrid(doc, cols, rows, anchor = 'tl') {
 
 // Copy the style (all visual props + anim) of one cell.
 export function copyStyle(cell) {
-  const { shape, size, color, opacity, rotation, anim } = cell;
-  return JSON.parse(JSON.stringify({ shape, size, color, opacity, rotation, anim }));
+  const { shape, size, color, opacity, rotation, stroke, anim } = cell;
+  return JSON.parse(JSON.stringify({ shape, size, color, opacity, rotation, stroke, anim }));
 }
 
 // Paste a copied style onto a cell, keeping its position/char index.

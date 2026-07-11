@@ -2,14 +2,14 @@
 
 import {
   el, icon, section, row, numInput, slider, colorInput, select, segmented,
-  button, iconButton, toast, modal,
+  button, iconButton, toast, modal, checkbox,
 } from './components.js';
 import {
   state, setUI, updateDoc, subscribe, emit, activeLayer,
   undo, redo, serializeProject, loadProject, saveNow,
 } from '../store.js';
 import {
-  SHAPES, makeLayer, resizeGrid, uid, defaultGroupAnim, defaultDotAnim, key,
+  SHAPES, makeLayer, resizeGrid, uid, defaultGroupAnim, defaultDotAnim, key, defaultStroke,
 } from '../model.js';
 import { TOOLS, applyStyleToSelection, copyStyleFromCell } from '../tools.js';
 import { GROUP_PRESETS, LOOP_PRESETS, DOT_PRESETS, EASING_TYPES, STAGGER_MODES } from '../animation.js';
@@ -38,6 +38,8 @@ const I = {
   copy: '<rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/>',
   paste: '<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
   fit: '<path d="M4 9V5a1 1 0 011-1h4M15 4h4a1 1 0 011 1v4M20 15v4a1 1 0 01-1 1h-4M9 20H5a1 1 0 01-1-1v-4"/>',
+  up: '<path d="M6 15l6-6 6 6"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
 };
 
 // ---------------------------------------------------------------- top bar
@@ -139,8 +141,13 @@ function renderLayers() {
         + (isActive ? 'bg-ink-3 border-line-2' : 'border-transparent hover:bg-ink-3/60'),
       draggable: true,
       onclick: () => { state.activeLayerId = layer.id; state.selection = new Set(); emit('doc'); },
-      ondragstart: e => e.dataTransfer.setData('text/plain', String(idx)),
-      ondragover: e => e.preventDefault(),
+      ondragstart: e => {
+        e.dataTransfer.setData('text/plain', String(idx));
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => item.classList.add('opacity-40'), 0);
+      },
+      ondragend: () => item.classList.remove('opacity-40'),
+      ondragover: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
       ondrop: e => {
         e.preventDefault();
         const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
@@ -161,6 +168,8 @@ function renderLayers() {
         ? el('span', { class: 'text-[9px] px-1 py-[1px] rounded bg-accent-dim text-accent font-mono', title: 'Has animation' }, '~')
         : null,
       el('span', { class: 'flex opacity-0 group-hover:opacity-100 ' + (!layer.visible || layer.locked ? '!opacity-100' : '') },
+        iconButton(I.up, e => { e.stopPropagation(); moveLayer(idx, 1); }, { title: 'Move up (toward front)', size: 12, class: idx === state.doc.layers.length - 1 ? 'opacity-30 pointer-events-none' : '' }),
+        iconButton(I.down, e => { e.stopPropagation(); moveLayer(idx, -1); }, { title: 'Move down (toward back)', size: 12, class: idx === 0 ? 'opacity-30 pointer-events-none' : '' }),
         iconButton(layer.locked ? I.lock : I.unlock, e => {
           updateDoc(d => { d.layers[idx].locked = !layer.locked; }, { undo: false });
         }, { title: 'Lock', size: 12, class: layer.locked ? 'text-accent' : '' }),
@@ -171,6 +180,14 @@ function renderLayers() {
     list.append(item);
   });
   box.append(list);
+}
+
+// Move a layer in the stack order. dir: 1 = toward the front (higher index,
+// drawn later/on top, appears nearer the top of this panel); -1 = toward the back.
+function moveLayer(idx, dir) {
+  const to = idx + dir;
+  if (to < 0 || to >= state.doc.layers.length) return;
+  updateDoc(d => { const [m] = d.layers.splice(idx, 1); d.layers.splice(to, 0, m); });
 }
 
 function addLayer(type) {
@@ -244,7 +261,13 @@ function targetCells(layer) {
   return [];
 }
 
-function applyDotProp(layer, prop, v, { undo = true } = {}) {
+// `live: true` marks a drag-in-progress update: it still writes the real
+// value into state.doc/brush (so the canvas — which repaints every rAF frame
+// straight from state regardless of any emit — reflects it immediately), but
+// it skips the full inspector re-render that a normal commit does. Without
+// this, every pixel of a slider/color drag would tear down and rebuild the
+// very control being dragged, killing the browser's native drag session.
+function applyDotProp(layer, prop, v, { undo = true, live = false } = {}) {
   state.brush[prop] = v;
   const targets = targetCells(layer);
   if (layer?.type === 'text') {
@@ -252,15 +275,15 @@ function applyDotProp(layer, prop, v, { undo = true } = {}) {
       const l = d.layers.find(x => x.id === layer.id);
       l.style[prop] = v;
       for (const cell of Object.values(l.cells)) cell[prop] = v;
-    }, { undo });
+    }, { undo, what: live ? 'silent' : 'doc' });
     return;
   }
   if (targets.length) {
     updateDoc(d => {
       const l = d.layers.find(x => x.id === layer.id);
       for (const k of targets) if (l.cells[k]) l.cells[k][prop] = v;
-    }, { undo });
-  } else emit('brush');
+    }, { undo, what: live ? 'silent' : 'doc' });
+  } else if (!live) emit('brush');
 }
 
 function sectionDot(layer) {
@@ -272,21 +295,35 @@ function sectionDot(layer) {
       : sel ? `Editing ${sel} selected dot${sel === 1 ? '' : 's'}`
         : 'Brush for new dots — select dots to restyle them');
 
-  return section('Dot',
+  const stroke = b.stroke || defaultStroke();
+  const setStroke = (patch, opts) => applyDotProp(layer, 'stroke', { ...stroke, ...patch }, opts);
+
+  const body = [
     hint,
     el('div', { class: 'mb-2.5' }, shapePicker(b.shape, v => { applyDotProp(layer, 'shape', v); renderInspector(); })),
-    row('Size', slider(b.size, v => applyDotProp(layer, 'size', v), { min: 0.1, max: 1.5, oninput: v => applyDotProp(layer, 'size', v, { undo: false }) })),
-    row('Color', colorInput(b.color, v => applyDotProp(layer, 'color', v))),
-    row('Opacity', slider(b.opacity, v => applyDotProp(layer, 'opacity', v), { oninput: v => applyDotProp(layer, 'opacity', v, { undo: false }) })),
-    row('Rotation', slider(b.rotation, v => applyDotProp(layer, 'rotation', v), { min: 0, max: 360, step: 1, oninput: v => applyDotProp(layer, 'rotation', v, { undo: false }) })),
-    el('div', { class: 'flex gap-1.5 mt-2.5' },
-      button([icon(I.copy, 13), 'Copy style'], () => {
-        const k = state.selection.size ? [...state.selection][0] : null;
-        if (k) copyStyleFromCell(k);
-        else { state.styleClipboard = JSON.parse(JSON.stringify(state.brush)); toast('Brush style copied'); }
-      }, { variant: 'outline', class: 'flex-1' }),
-      button([icon(I.paste, 13), 'Paste style'], applyStyleToSelection, { variant: 'outline', class: 'flex-1' })),
-  );
+    row('Size', slider(b.size, v => applyDotProp(layer, 'size', v), { min: 0.1, max: 1.5, oninput: v => applyDotProp(layer, 'size', v, { undo: false, live: true }) })),
+    row('Color', colorInput(b.color, v => applyDotProp(layer, 'color', v), { oninput: v => applyDotProp(layer, 'color', v, { undo: false, live: true }) })),
+    row('Opacity', slider(b.opacity, v => applyDotProp(layer, 'opacity', v), { oninput: v => applyDotProp(layer, 'opacity', v, { undo: false, live: true }) })),
+    row('Rotation', slider(b.rotation, v => applyDotProp(layer, 'rotation', v), { min: 0, max: 360, step: 1, oninput: v => applyDotProp(layer, 'rotation', v, { undo: false, live: true }) })),
+    row('Stroke', checkbox(stroke.enabled, v => { setStroke({ enabled: v }); renderInspector(); })),
+  ];
+
+  if (stroke.enabled) {
+    body.push(
+      row('Stroke width', slider(stroke.width, v => setStroke({ width: v }), { min: 0.5, max: 12, step: 0.5, oninput: v => setStroke({ width: v }, { undo: false, live: true }) })),
+      row('Stroke color', colorInput(stroke.color, v => setStroke({ color: v }), { oninput: v => setStroke({ color: v }, { undo: false, live: true }) })),
+    );
+  }
+
+  body.push(el('div', { class: 'flex gap-1.5 mt-2.5' },
+    button([icon(I.copy, 13), 'Copy style'], () => {
+      const k = state.selection.size ? [...state.selection][0] : null;
+      if (k) copyStyleFromCell(k);
+      else { state.styleClipboard = JSON.parse(JSON.stringify(state.brush)); toast('Brush style copied'); }
+    }, { variant: 'outline', class: 'flex-1' }),
+    button([icon(I.paste, 13), 'Paste style'], applyStyleToSelection, { variant: 'outline', class: 'flex-1' })));
+
+  return section('Dot', ...body);
 }
 
 function sampleSelection(layer) {
@@ -372,7 +409,9 @@ function sectionGroupAnim(layer) {
     if (isLoop) {
       body.push(
         row('Period', numInput(a.loopPeriod / 1000, v => update(l => { l.groupAnim.loopPeriod = v * 1000; }), { min: 0.1, max: 20, step: 0.1, suffix: 's' })),
-        row('Intensity', slider(a.intensity ?? 0.5, v => update(l => { l.groupAnim.intensity = v; }))),
+        row('Intensity', slider(a.intensity ?? 0.5, v => update(l => { l.groupAnim.intensity = v; }), {
+          oninput: v => update(l => { l.groupAnim.intensity = v; }, { what: 'silent' }),
+        })),
       );
     } else {
       body.push(
@@ -400,17 +439,17 @@ function sectionDotAnim(layer) {
   const source = sel.length ? layer.cells[sel[0]].anim : state.brush.anim;
   const a = source;
 
-  const setAnim = fn => {
+  const setAnim = (fn, { live = false } = {}) => {
     if (sel.length) {
       updateDoc(d => {
         const l = d.layers.find(x => x.id === layer.id);
         for (const k of sel) if (l.cells[k]) fn(l.cells[k]);
-      });
+      }, { undo: !live, what: live ? 'silent' : 'doc' });
     } else {
       fn(state.brush);
-      emit('brush');
+      if (!live) emit('brush');
     }
-    renderInspector();
+    if (!live) renderInspector();
   };
 
   const body = [
@@ -429,7 +468,9 @@ function sectionDotAnim(layer) {
     body.push(
       row('Period', numInput(a.period / 1000, v => setAnim(t => { t.anim.period = v * 1000; }), { min: 0.08, max: 20, step: 0.05, suffix: 's' })),
       row('Delay', numInput(a.delay / 1000, v => setAnim(t => { t.anim.delay = v * 1000; }), { min: 0, max: 20, step: 0.05, suffix: 's' })),
-      row('Intensity', slider(a.intensity ?? 0.5, v => setAnim(t => { t.anim.intensity = v; }))),
+      row('Intensity', slider(a.intensity ?? 0.5, v => setAnim(t => { t.anim.intensity = v; }), {
+        oninput: v => setAnim(t => { t.anim.intensity = v; }, { live: true }),
+      })),
       easingControls(a.easing, () => setAnim(() => {})),
     );
   }

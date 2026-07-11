@@ -57,29 +57,77 @@ export function numInput(value, onchange, { min = -9999, max = 9999, step = 1, w
   return el('div', { class: 'flex items-center gap-1' }, input, el('span', { class: 'text-muted text-[11px]' }, suffix));
 }
 
-export function slider(value, onchange, { min = 0, max = 1, step = 0.01, oninput } = {}) {
-  const num = el('span', { class: 'font-mono text-[11px] text-muted w-9 text-right' }, fmt(value));
-  const range = el('input', {
-    type: 'range', min, max, step, value,
-    class: 'flex-1',
-    oninput: e => { const v = parseFloat(e.target.value); num.textContent = fmt(v); (oninput || onchange)(v); },
-    onchange: e => onchange(parseFloat(e.target.value)),
+// Slider + number field, kept in sync.
+//
+// Drag-safety rule: the live 'input' event (fired continuously while dragging)
+// NEVER calls `onchange` directly — only the optional `oninput` callback does,
+// and only if the caller explicitly passes one. `onchange` only fires once,
+// on the native 'change' event (drag release / committed number entry).
+// This matters because `onchange` call sites often trigger a full panel
+// re-render (renderInspector rebuilds the DOM), which — if it fired on every
+// drag tick — would destroy this very input mid-drag and kill the browser's
+// native drag session. Callers that want a live canvas preview while dragging
+// should pass `oninput` wired to a *non-rebuilding* update (see applyDotProp's
+// `live` flag / `what:'silent'` in panels.js).
+export function slider(value, onchange, { min = 0, max = 1, step = 0.01, oninput, width = 'w-14' } = {}) {
+  function fmt(v) { return step >= 1 ? String(Math.round(v)) : (Math.round(v * 100) / 100).toString(); }
+  const clamp = v => Math.min(max, Math.max(min, v));
+
+  const range = el('input', { type: 'range', min, max, step, value, class: 'flex-1' });
+  const numBox = el('input', {
+    type: 'number', min, max, step, value: fmt(value),
+    class: `${width} bg-ink-3 border border-line rounded px-1.5 py-[3px] text-right font-mono text-[12px] outline-none focus:border-line-2`,
   });
-  function fmt(v) { return step >= 1 ? String(Math.round(v)) : v.toFixed(2).replace(/0$/, ''); }
-  return el('div', { class: 'flex items-center gap-2 flex-1' }, range, num);
+
+  range.addEventListener('input', () => {
+    const v = clamp(parseFloat(range.value));
+    numBox.value = fmt(v);
+    if (oninput) oninput(v);
+  });
+  range.addEventListener('change', () => onchange(clamp(parseFloat(range.value))));
+
+  numBox.addEventListener('change', e => {
+    let v = parseFloat(e.target.value);
+    if (isNaN(v)) v = value;
+    v = clamp(v);
+    e.target.value = fmt(v);
+    range.value = v;
+    onchange(v);
+  });
+
+  return el('div', { class: 'flex items-center gap-2 flex-1' }, range, numBox);
 }
 
-export function colorInput(value, onchange) {
+// Color swatch + hex field. Same drag-safety rule as slider(): the swatch's
+// native 'input' (fires while dragging inside the OS color picker) only calls
+// the optional `oninput` live-callback; `onchange` fires once on 'change'
+// (when the picker is closed/committed), which is safe to rebuild the panel.
+export function colorInput(value, onchange, { oninput } = {}) {
   const hex = el('input', {
     type: 'text', value, spellcheck: false,
     class: 'w-[68px] bg-ink-3 border border-line rounded px-1.5 py-[3px] font-mono text-[12px] outline-none focus:border-line-2 uppercase',
     onchange: e => { const v = normHex(e.target.value); if (v) { swatch.value = v; e.target.value = v; onchange(v); } else e.target.value = value; },
   });
-  const swatch = el('input', {
-    type: 'color', value,
-    oninput: e => { hex.value = e.target.value.toUpperCase(); onchange(e.target.value); },
+  const swatch = el('input', { type: 'color', value });
+  swatch.addEventListener('input', e => {
+    hex.value = e.target.value.toUpperCase();
+    if (oninput) oninput(e.target.value);
+  });
+  swatch.addEventListener('change', e => {
+    hex.value = e.target.value.toUpperCase();
+    onchange(e.target.value);
   });
   return el('div', { class: 'flex items-center gap-1.5' }, swatch, hex);
+}
+
+export function checkbox(value, onchange, label = '') {
+  const box = el('input', {
+    type: 'checkbox', checked: value,
+    class: 'w-3.5 h-3.5 rounded cursor-pointer accent-accent',
+    onchange: e => onchange(e.target.checked),
+  });
+  if (!label) return box;
+  return el('label', { class: 'flex items-center gap-1.5 cursor-pointer text-[12px] text-zinc-300' }, box, label);
 }
 
 function normHex(s) {

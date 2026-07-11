@@ -21,19 +21,30 @@ export function hexWithHue(hex, hueDeg) {
   return `hsl(${Math.round(h * 360)},${Math.round(s * 100)}%,${Math.round(l * 100)}%)`;
 }
 
-export function drawDotShape(ctx, shape, x, y, s) {
-  // (x,y) top-left of the dot square of side s.
+// (x,y) top-left of the dot square of side s.
+// `stroke`, if given as { enabled, color, width }, outlines the shape in
+// addition to filling it. 'ring' is itself an outline-only shape, so an
+// extra user stroke isn't applied there (would just double the same line).
+export function drawDotShape(ctx, shape, x, y, s, stroke) {
+  const applyStroke = () => {
+    if (!stroke || !stroke.enabled || stroke.width <= 0) return;
+    ctx.lineWidth = stroke.width;
+    ctx.strokeStyle = stroke.color;
+    ctx.stroke();
+  };
   switch (shape) {
     case 'circle':
       ctx.beginPath();
       ctx.arc(x + s / 2, y + s / 2, s / 2, 0, Math.PI * 2);
       ctx.fill();
+      applyStroke();
       break;
     case 'rounded': {
       const r = s * 0.28;
       ctx.beginPath();
       ctx.roundRect(x, y, s, s, r);
       ctx.fill();
+      applyStroke();
       break;
     }
     case 'diamond':
@@ -44,6 +55,7 @@ export function drawDotShape(ctx, shape, x, y, s) {
       ctx.lineTo(x, y + s / 2);
       ctx.closePath();
       ctx.fill();
+      applyStroke();
       break;
     case 'triangle':
       ctx.beginPath();
@@ -52,6 +64,7 @@ export function drawDotShape(ctx, shape, x, y, s) {
       ctx.lineTo(x, y + s);
       ctx.closePath();
       ctx.fill();
+      applyStroke();
       break;
     case 'half-square':
       ctx.beginPath();
@@ -60,6 +73,7 @@ export function drawDotShape(ctx, shape, x, y, s) {
       ctx.lineTo(x, y + s);
       ctx.closePath();
       ctx.fill();
+      applyStroke();
       break;
     case 'ring': {
       const lw = Math.max(1, s * 0.18);
@@ -72,13 +86,19 @@ export function drawDotShape(ctx, shape, x, y, s) {
     }
     case 'plus': {
       const t = s / 3;
-      ctx.fillRect(x + t, y, t, s);
-      ctx.fillRect(x, y + t, s, t);
+      ctx.beginPath();
+      ctx.rect(x + t, y, t, s);
+      ctx.rect(x, y + t, s, t);
+      ctx.fill();
+      applyStroke();
       break;
     }
     case 'square':
     default:
-      ctx.fillRect(x, y, s, s);
+      ctx.beginPath();
+      ctx.rect(x, y, s, s);
+      ctx.fill();
+      applyStroke();
   }
 }
 
@@ -106,14 +126,17 @@ export function renderFrame(ctx, doc, t, opts = {}) {
       const off = (cs - s) / 2;
       ctx.globalAlpha = v.opacity;
       ctx.fillStyle = hexWithHue(v.color, v.hue);
+      const stroke = v.stroke && v.stroke.enabled
+        ? { enabled: true, width: Math.max(0.25, v.stroke.width * v.size), color: hexWithHue(v.stroke.color, v.hue) }
+        : null;
       if (v.rotation) {
         ctx.save();
         ctx.translate(x + cs / 2, y + cs / 2);
         ctx.rotate(v.rotation * Math.PI / 180);
-        drawDotShape(ctx, v.shape, -s / 2, -s / 2, s);
+        drawDotShape(ctx, v.shape, -s / 2, -s / 2, s, stroke);
         ctx.restore();
       } else {
-        drawDotShape(ctx, v.shape, x + off, y + off, s);
+        drawDotShape(ctx, v.shape, x + off, y + off, s, stroke);
       }
     }
   }

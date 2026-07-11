@@ -7,8 +7,10 @@ import { evalDot, staggerDelay, LOOP_PRESETS } from '../animation.js';
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
-function shapeSvg(shape, x, y, s, fill, opacity, rotation) {
-  const attrs = `fill="${fill}"` + (opacity < 1 ? ` opacity="${opacity.toFixed(3)}"` : '');
+function shapeSvg(shape, x, y, s, fill, opacity, rotation, stroke) {
+  const strokeAttrs = stroke && stroke.enabled && stroke.width > 0
+    ? ` stroke="${stroke.color}" stroke-width="${(+stroke.width).toFixed(2)}"` : '';
+  const attrs = `fill="${fill}"` + (opacity < 1 ? ` opacity="${opacity.toFixed(3)}"` : '') + strokeAttrs;
   const cx = x + s / 2, cy = y + s / 2;
   const rot = rotation ? ` transform="rotate(${rotation} ${cx} ${cy})"` : '';
   const n = v => +v.toFixed(2);
@@ -58,14 +60,15 @@ export function exportSvg({ animated = false, transparent = false, duration } = 
         const v = evalDot(k, cell, layer, doc, state.ui.time);
         if (v.opacity <= 0.002 || v.size <= 0.002) continue;
         const s = cs * v.size;
-        parts.push(shapeSvg(v.shape, x + (cs - s) / 2, y + (cs - s) / 2, s, cell.color, v.opacity, cell.rotation));
+        const stroke = v.stroke && v.stroke.enabled ? { ...v.stroke, width: v.stroke.width * v.size } : null;
+        parts.push(shapeSvg(v.shape, x + (cs - s) / 2, y + (cs - s) / 2, s, cell.color, v.opacity, cell.rotation, stroke));
         continue;
       }
 
       // Animated: base dot + CSS animation approximating its timeline.
       const s = cs * cell.size;
       const anim = buildCssAnim(k, cell, layer, doc, dur);
-      let node = shapeSvg(cell.shape, x + (cs - s) / 2, y + (cs - s) / 2, s, cell.color, cell.opacity, cell.rotation);
+      let node = shapeSvg(cell.shape, x + (cs - s) / 2, y + (cs - s) / 2, s, cell.color, cell.opacity, cell.rotation, cell.stroke);
       if (anim) {
         const cls = `a${animClass++}`;
         styles.push(anim.keyframes(cls));

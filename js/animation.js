@@ -223,5 +223,6 @@ export function evalDot(k, cell, layer, doc, t) {
     color: cell.color,
     rotation: cell.rotation,
     shape: cell.shape,
+    stroke: cell.stroke,
   };
 }
