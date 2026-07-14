@@ -1,7 +1,7 @@
 // SVG export: static (exact) and animated (CSS keyframes; best-effort mapping
 // of group + per-dot animations).
 
-import { state } from '../store.js';
+import { state, getAsset } from '../store.js';
 import { gridSizePx, cellPos, parseKey } from '../model.js';
 import { evalDot, staggerDelay, LOOP_PRESETS } from '../animation.js';
 
@@ -29,6 +29,10 @@ function shapeSvg(shape, x, y, s, fill, opacity, rotation, stroke) {
       return `<path d="M${n(x + t)} ${n(y)}h${n(t)}v${n(t)}h${n(t)}v${n(t)}h-${n(t)}v${n(t)}h-${n(t)}v-${n(t)}h-${n(t)}v-${n(t)}h${n(t)}z" ${attrs}${rot}/>`;
     }
     case 'square':
+    // Custom-image dots fall back to a plain square in SVG export — embedding
+    // a data URL per dot would bloat the file, often for the same image
+    // repeated many times. Canvas-based exports (PNG/GIF/video) show it fully.
+    case 'image':
     default: return `<rect x="${n(x)}" y="${n(y)}" width="${n(s)}" height="${n(s)}" ${attrs}${rot}/>`;
   }
 }
@@ -42,6 +46,19 @@ export function exportSvg({ animated = false, transparent = false, duration } = 
   const parts = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`);
   if (!transparent) parts.push(`<rect width="${w}" height="${h}" fill="${doc.grid.bg}"/>`);
+  if (doc.grid.bgImage) {
+    const asset = getAsset(doc.grid.bgImage.assetId);
+    if (asset) {
+      const cfg = doc.grid.bgImage;
+      // Note: SVG export approximates the background as centered "cover"
+      // (preserveAspectRatio slice) — rotation and opacity are exact, but a
+      // manual pan offset isn't reproduced here. Canvas-based exports
+      // (PNG/GIF/video) show the pan exactly as previewed.
+      const rot = cfg.rotate ? ` transform="rotate(${cfg.rotate} ${w / 2} ${h / 2})"` : '';
+      const op = cfg.opacity < 1 ? ` opacity="${cfg.opacity}"` : '';
+      parts.push(`<image href="${asset.data}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"${op}${rot}/>`);
+    }
+  }
 
   const styles = [];
   let animClass = 0;

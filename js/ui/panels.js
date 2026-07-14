@@ -7,6 +7,7 @@ import {
 import {
   state, setUI, updateDoc, subscribe, emit, activeLayer,
   undo, redo, serializeProject, loadProject, saveNow,
+  addAsset, getAsset, removeAsset, clearAllStorage,
 } from '../store.js';
 import {
   SHAPES, makeLayer, resizeGrid, uid, defaultGroupAnim, defaultDotAnim, key, defaultStroke,
@@ -19,6 +20,8 @@ import { drawDotShape } from '../render.js';
 import { fitToView, zoomAt } from '../viewport.js';
 import { curvePreview, bezierEditor } from './curve.js';
 import { openExportDialog } from '../export/index.js';
+import { openBackgroundImageEditor } from './imageEditor.js';
+import { downscaleImageFile } from '../imageUtils.js';
 
 const I = {
   undo: '<path d="M9 14L4 9l5-5M4 9h10a6 6 0 016 6v0a6 6 0 01-6 6h-3"/>',
@@ -38,8 +41,6 @@ const I = {
   copy: '<rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/>',
   paste: '<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
   fit: '<path d="M4 9V5a1 1 0 011-1h4M15 4h4a1 1 0 011 1v4M20 15v4a1 1 0 01-1 1h-4M9 20H5a1 1 0 01-1-1v-4"/>',
-  up: '<path d="M6 15l6-6 6 6"/>',
-  down: '<path d="M6 9l6 6 6-6"/>',
 };
 
 // ---------------------------------------------------------------- top bar
@@ -91,7 +92,7 @@ function openProjectMenu() {
     }, { variant: 'outline' }),
     button('New project (clears canvas)', () => {
       if (!confirm('Start a new project? Current work is replaced (it stays in your downloads if you saved it).')) return;
-      localStorage.removeItem('dotmatrix.project.v1');
+      clearAllStorage();
       location.reload();
     }, { variant: 'outline' }),
   );
@@ -134,6 +135,10 @@ function renderLayers() {
       iconButton(I.plus, () => addLayer('dots'), { title: 'Add layer', size: 13 }))));
 
   const list = el('div', { class: 'px-2 pb-2 flex flex-col-reverse gap-[2px]' });
+  const clearDropIndicators = () => {
+    for (const child of list.children) child.classList.remove('border-t-2', 'border-b-2', 'border-t-accent', 'border-b-accent');
+  };
+
   state.doc.layers.forEach((layer, idx) => {
     const isActive = layer.id === state.activeLayerId;
     const item = el('div', {
@@ -146,13 +151,29 @@ function renderLayers() {
         e.dataTransfer.effectAllowed = 'move';
         setTimeout(() => item.classList.add('opacity-40'), 0);
       },
-      ondragend: () => item.classList.remove('opacity-40'),
-      ondragover: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
+      ondragend: () => { item.classList.remove('opacity-40'); clearDropIndicators(); },
+      ondragover: e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        // Flip on flex-col-reverse: the upper half of a row visually sits
+        // toward a HIGHER array index (rendered first-in-array = bottom).
+        const above = (e.clientY - item.getBoundingClientRect().top) < item.offsetHeight / 2;
+        clearDropIndicators();
+        item.classList.add(above ? 'border-t-2' : 'border-b-2', above ? 'border-t-accent' : 'border-b-accent');
+        item.dataset.dropAbove = above ? '1' : '0';
+      },
       ondrop: e => {
         e.preventDefault();
+        clearDropIndicators();
         const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
-        if (isNaN(from) || from === idx) return;
-        updateDoc(d => { const [m] = d.layers.splice(from, 1); d.layers.splice(idx, 0, m); });
+        if (isNaN(from)) return;
+        const insertAt = item.dataset.dropAbove === '1' ? idx + 1 : idx;
+        if (from === insertAt || from + 1 === insertAt) return; // dropped back where it started
+        updateDoc(d => {
+          const [moved] = d.layers.splice(from, 1);
+          const target = from < insertAt ? insertAt - 1 : insertAt;
+          d.layers.splice(Math.max(0, Math.min(d.layers.length, target)), 0, moved);
+        });
       },
     },
       icon(layer.type === 'text' ? I.text : I.dots, 13),
@@ -168,8 +189,6 @@ function renderLayers() {
         ? el('span', { class: 'text-[9px] px-1 py-[1px] rounded bg-accent-dim text-accent font-mono', title: 'Has animation' }, '~')
         : null,
       el('span', { class: 'flex opacity-0 group-hover:opacity-100 ' + (!layer.visible || layer.locked ? '!opacity-100' : '') },
-        iconButton(I.up, e => { e.stopPropagation(); moveLayer(idx, 1); }, { title: 'Move up (toward front)', size: 12, class: idx === state.doc.layers.length - 1 ? 'opacity-30 pointer-events-none' : '' }),
-        iconButton(I.down, e => { e.stopPropagation(); moveLayer(idx, -1); }, { title: 'Move down (toward back)', size: 12, class: idx === 0 ? 'opacity-30 pointer-events-none' : '' }),
         iconButton(layer.locked ? I.lock : I.unlock, e => {
           updateDoc(d => { d.layers[idx].locked = !layer.locked; }, { undo: false });
         }, { title: 'Lock', size: 12, class: layer.locked ? 'text-accent' : '' }),
@@ -180,14 +199,6 @@ function renderLayers() {
     list.append(item);
   });
   box.append(list);
-}
-
-// Move a layer in the stack order. dir: 1 = toward the front (higher index,
-// drawn later/on top, appears nearer the top of this panel); -1 = toward the back.
-function moveLayer(idx, dir) {
-  const to = idx + dir;
-  if (to < 0 || to >= state.doc.layers.length) return;
-  updateDoc(d => { const [m] = d.layers.splice(idx, 1); d.layers.splice(to, 0, m); });
 }
 
 function addLayer(type) {
@@ -227,6 +238,18 @@ function sectionGrid() {
         onclick: () => { setUI({ resizeAnchor: a }, 'silent'); renderInspector(); },
       })));
 
+  const bgImage = g.bgImage;
+  const bgImageRow = bgImage
+    ? el('div', { class: 'flex items-center gap-1.5 w-full' },
+        el('img', { src: getAsset(bgImage.assetId)?.data || '', class: 'w-6 h-6 rounded object-cover border border-line' }),
+        button('Edit…', () => openBackgroundImageEditor(), { variant: 'outline', class: 'flex-1' }),
+        button('Remove', () => {
+          updateDoc(d => { d.grid.bgImage = null; });
+          removeAsset(bgImage.assetId);
+          renderInspector();
+        }, { variant: 'outline' }))
+    : button('Add background image…', () => openBackgroundImageEditor(), { variant: 'outline', class: 'w-full' });
+
   return section('Grid',
     row('Columns', numInput(g.cols, v => updateDoc(d => resizeGrid(d, v, d.grid.rows, anchor)), { min: 1, max: 128 })),
     row('Rows', numInput(g.rows, v => updateDoc(d => resizeGrid(d, d.grid.cols, v, anchor)), { min: 1, max: 128 })),
@@ -234,24 +257,51 @@ function sectionGrid() {
     row('Dot cell', numInput(g.cellSize, v => updateDoc(d => { d.grid.cellSize = v; }), { min: 2, max: 80, suffix: 'px' })),
     row('Gap', numInput(g.gap, v => updateDoc(d => { d.grid.gap = v; }), { min: 0, max: 60, suffix: 'px' })),
     row('Background', colorInput(g.bg, v => updateDoc(d => { d.grid.bg = v; }, { undo: false }))),
+    el('div', { class: 'mt-1' }, bgImageRow),
   );
 }
 
-function shapePicker(value, onchange) {
-  const wrap = el('div', { class: 'grid grid-cols-8 gap-1' });
+function shapePicker(value, imageId, onSelect, onUploadImage) {
+  const grid = el('div', { class: 'grid grid-cols-8 gap-1' });
   for (const shape of SHAPES) {
     const c = el('canvas', { width: 18, height: 18 });
     const cx = c.getContext('2d');
     cx.fillStyle = '#e6e8ee';
     drawDotShape(cx, shape, 2, 2, 14);
-    wrap.append(el('button', {
+    grid.append(el('button', {
       title: shape,
       class: 'p-1 rounded-md border flex items-center justify-center '
         + (shape === value ? 'border-accent bg-accent-dim' : 'border-line bg-ink-3 hover:border-line-2'),
-      onclick: () => onchange(shape),
+      onclick: () => onSelect(shape),
     }, c));
   }
-  return wrap;
+
+  const asset = imageId ? getAsset(imageId) : null;
+  const fileInput = el('input', {
+    type: 'file', accept: 'image/*', class: 'hidden',
+    onchange: async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        // Small cap — this is a tiny per-dot shape, not a photo, so keep it
+        // light for memory and redraw speed on low-end devices.
+        const dataUrl = await downscaleImageFile(file, 128, 0.86);
+        onUploadImage(dataUrl);
+      } catch { toast('Could not read that image'); }
+      e.target.value = '';
+    },
+  });
+  const imageTile = el('button', {
+    class: 'flex items-center gap-2 px-2 py-1.5 rounded-md border w-full text-left mt-1.5 '
+      + (value === 'image' ? 'border-accent bg-accent-dim' : 'border-line bg-ink-3 hover:border-line-2'),
+    onclick: () => fileInput.click(),
+  },
+    asset ? el('img', { src: asset.data, class: 'w-5 h-5 rounded object-cover' })
+      : el('div', { class: 'w-5 h-5 rounded bg-ink-3 border border-line' }),
+    el('span', { class: 'text-[11px] text-zinc-300 flex-1' }, asset ? 'Custom image — click to change' : 'Use a custom image…'),
+    fileInput);
+
+  return el('div', { class: 'flex flex-col' }, grid, imageTile);
 }
 
 // Which cells do brush/style edits apply to?
@@ -300,7 +350,12 @@ function sectionDot(layer) {
 
   const body = [
     hint,
-    el('div', { class: 'mb-2.5' }, shapePicker(b.shape, v => { applyDotProp(layer, 'shape', v); renderInspector(); })),
+    el('div', { class: 'mb-2.5' }, shapePicker(b.shape, b.imageId, v => { applyDotProp(layer, 'shape', v); renderInspector(); }, dataUrl => {
+      const id = addAsset('image', dataUrl);
+      applyDotProp(layer, 'shape', 'image');
+      applyDotProp(layer, 'imageId', id);
+      renderInspector();
+    })),
     row('Size', slider(b.size, v => applyDotProp(layer, 'size', v), { min: 0.1, max: 1.5, oninput: v => applyDotProp(layer, 'size', v, { undo: false, live: true }) })),
     row('Color', colorInput(b.color, v => applyDotProp(layer, 'color', v), { oninput: v => applyDotProp(layer, 'color', v, { undo: false, live: true }) })),
     row('Opacity', slider(b.opacity, v => applyDotProp(layer, 'opacity', v), { oninput: v => applyDotProp(layer, 'opacity', v, { undo: false, live: true }) })),

@@ -170,7 +170,14 @@ function evalGroup(anim, k, cell, grid, t) {
     return out;
   }
 
-  // Enter/exit presets.
+  // Enter/exit presets. Once time passes this clip's window on the timeline
+  // (delay -> delay+duration), the layer hides completely — a clip's window
+  // is its full visible lifetime, not just the transition-in. Without this,
+  // a layer would stay on screen forever after its entrance finished and
+  // pile up/overlap with whatever the next layer's clip shows.
+  const clipEnd = (anim.delay || 0) + Math.max(1, anim.duration);
+  if (t > clipEnd) { out.opacity = 0; return out; }
+
   const sd = anim.preset === 'dissolve'
     ? hash01(k) * (anim.stagger?.amount ?? 30) * 20
     : staggerDelay(k, cell, anim.stagger, grid);
@@ -224,5 +231,6 @@ export function evalDot(k, cell, layer, doc, t) {
     rotation: cell.rotation,
     shape: cell.shape,
     stroke: cell.stroke,
+    imageId: cell.imageId,
   };
 }

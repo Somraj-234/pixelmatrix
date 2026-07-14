@@ -20,6 +20,7 @@ export function defaultCell(brush) {
     opacity: brush?.opacity ?? 1,
     rotation: brush?.rotation ?? 0,
     stroke: brush?.stroke ? JSON.parse(JSON.stringify(brush.stroke)) : defaultStroke(),
+    imageId: brush?.imageId ?? null, // asset id, only used when shape === 'image'
     anim: brush?.anim ? JSON.parse(JSON.stringify(brush.anim)) : null,
   };
 }
@@ -61,9 +62,10 @@ export function defaultDotAnim(preset = 'pulse') {
 
 export function defaultDoc() {
   const doc = {
-    grid: { cols: 24, rows: 24, cellSize: 20, gap: 8, bg: '#0D63F8' },
+    grid: { cols: 24, rows: 24, cellSize: 20, gap: 8, bg: '#0D63F8', bgImage: null },
     layers: [makeLayer('Layer 1')],
     animation: { duration: 3000, fps: 30, loop: true },
+    audio: null, // { assetId, srcDuration, trimStart, trimEnd, offset, volume }
   };
   // Seed a small starter mark so the canvas isn't empty.
   const seed = ['5,5', '5,6', '6,5', '7,7', '7,8', '8,7', '8,8'];
@@ -71,17 +73,26 @@ export function defaultDoc() {
   return doc;
 }
 
+export function defaultBgImage(assetId) {
+  return { assetId, offsetX: 0.5, offsetY: 0.5, zoom: 1, rotate: 0, opacity: 1 };
+}
+
 export function migrateDoc(doc) {
   // Forward-compat hook; currently v1 passthrough with defaults filled.
-  doc.grid = { cols: 24, rows: 24, cellSize: 20, gap: 8, bg: '#0D63F8', ...doc.grid };
+  doc.grid = { cols: 24, rows: 24, cellSize: 20, gap: 8, bg: '#0D63F8', bgImage: null, ...doc.grid };
   doc.animation = { duration: 3000, fps: 30, loop: true, ...doc.animation };
+  doc.audio = doc.audio || null;
   doc.layers = (doc.layers?.length ? doc.layers : [makeLayer('Layer 1')]).map(l => ({
     visible: true, locked: false, opacity: 1, cells: {}, groupAnim: null, type: 'dots', ...l,
   }));
   // Backfill stroke on cells/styles saved before that field existed.
   for (const l of doc.layers) {
-    for (const cell of Object.values(l.cells)) if (!cell.stroke) cell.stroke = defaultStroke();
+    for (const cell of Object.values(l.cells)) {
+      if (!cell.stroke) cell.stroke = defaultStroke();
+      if (cell.imageId === undefined) cell.imageId = null;
+    }
     if (l.style && !l.style.stroke) l.style.stroke = defaultStroke();
+    if (l.style && l.style.imageId === undefined) l.style.imageId = null;
   }
   return doc;
 }
@@ -117,8 +128,8 @@ export function resizeGrid(doc, cols, rows, anchor = 'tl') {
 
 // Copy the style (all visual props + anim) of one cell.
 export function copyStyle(cell) {
-  const { shape, size, color, opacity, rotation, stroke, anim } = cell;
-  return JSON.parse(JSON.stringify({ shape, size, color, opacity, rotation, stroke, anim }));
+  const { shape, size, color, opacity, rotation, stroke, imageId, anim } = cell;
+  return JSON.parse(JSON.stringify({ shape, size, color, opacity, rotation, stroke, imageId, anim }));
 }
 
 // Paste a copied style onto a cell, keeping its position/char index.

@@ -4,6 +4,7 @@
 import { state, setUI } from './store.js';
 import { gridSizePx, cellPos, pxToCell, parseKey } from './model.js';
 import { renderFrame } from './render.js';
+import { syncAudio } from './audio.js';
 
 let canvas, ctx, wrap;
 let raf = 0;
@@ -122,6 +123,7 @@ function frame(ts) {
     // Timeline playhead is DOM — update it cheaply without full emit.
     if (onTick) onTick(t);
   }
+  syncAudio(state.doc, state.ui.time, state.ui.playing);
 
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
